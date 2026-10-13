@@ -73,6 +73,7 @@ android_library {
 
 android_app {
     name: "SystemUIGoogle",
+    additional_manifests: [":evolution-clipp-systemui-manifest"],
     defaults: [
         "platform_app_defaults",
         "SystemUI_optimized_defaults",
@@ -81,7 +82,7 @@ android_app {
     static_libs: [
         "SystemUIGoogle-application"
     ],
-    jni_libs: ["libtensorflowlite_jni"],
+    jni_libs: ["libtensorflowlite_jni", "libevolution_clipp_jni"],
     use_embedded_native_libs: true,
     resource_dirs: [],
     asset_dirs: ["assets"],
@@ -107,6 +108,7 @@ android_app {
         ],
     },
     required: [
+        "clipp-privapp-permissions",
         "privapp_whitelist_com.android.systemui",
     ],
 
