@@ -116,6 +116,7 @@ open class AmbientIndicationContainer(context: Context, attrs: AttributeSet) :
     var mPowerInteractor: PowerInteractor? = null
     lateinit var mRealTextSet: LinearLayout
     var mStatusBarState: Int = 0
+    var mShowingLyrics: Boolean = false
     lateinit var mTempTextSet: LinearLayout
     lateinit var mTempTextView: TextView
     lateinit var mTempTextViewExtended: TextView
@@ -292,7 +293,7 @@ open class AmbientIndicationContainer(context: Context, attrs: AttributeSet) :
 
     override fun onDozingChanged(isDozing: Boolean) {
         mDozing = isDozing
-        visibility = if (mStatusBarState == 1) View.VISIBLE else View.INVISIBLE
+        updateRootVisibility()
         if (mUsingExtendedIndication) {
             if (::mAmbientIndicationExtendedContainer.isInitialized) {
                 mAmbientIndicationExtendedContainer.isEnabled = !isDozing
@@ -312,13 +313,28 @@ open class AmbientIndicationContainer(context: Context, attrs: AttributeSet) :
 
     override fun onStateChanged(state: Int) {
         mStatusBarState = state
-        visibility = if (state == 1) View.VISIBLE else View.INVISIBLE
+        updateRootVisibility()
+    }
+
+    /**
+     * An empty container still occupies the band under the fingerprint on UDFPS, which is the
+     * space the lockscreen island uses. Collapse it until there is a song or a search to show.
+     */
+    private fun updateRootVisibility() {
+        val hasContent = mAmbientMusicText != null
+        visibility =
+            when {
+                mStatusBarState == 1 && hasContent -> View.VISIBLE
+                mStatusBarState == 1 -> View.GONE
+                else -> View.INVISIBLE
+            }
     }
 
     override fun onPrimaryMetadataOrStateChanged(metadata: MediaMetadata?, state: Int) {
         if (mMediaPlaybackState != state) {
             mMediaPlaybackState = state
-            if (NotificationMediaManager.isPlayingState(state)) {
+            // Playback clears a recognition result, but lyrics are shown because of it.
+            if (NotificationMediaManager.isPlayingState(state) && !mShowingLyrics) {
                 setAmbientMusic(null, null, null, 0, false, null, null)
             }
         }
@@ -330,7 +346,7 @@ open class AmbientIndicationContainer(context: Context, attrs: AttributeSet) :
         val falsingManager = mFalsingManager
         if ((falsingManager == null || !falsingManager.isFalseTap(1)) && mOpenIntent != null) {
             mPowerInteractor?.wakeUpIfDozing("AMBIENT_MUSIC_CLICK", 4)
-            if (mAmbientSkipUnlock) {
+            if (mAmbientSkipUnlock && mOpenIntent!!.isBroadcast) {
                 sendBroadcastWithoutDismissingKeyguard(mOpenIntent!!)
             } else {
                 mActivityStarter?.startPendingIntentDismissingKeyguard(mOpenIntent)
@@ -365,11 +381,16 @@ open class AmbientIndicationContainer(context: Context, attrs: AttributeSet) :
             if (!expanded) {
                 if (mExtendedIndication?.expandedIndicationData != null) {
                     performExpandAnimation()
+                    return
                 }
                 val expandIntent = mExtendedIndication?.expandIntent
                 if (expandIntent != null) {
                     mPowerInteractor?.wakeUpIfDozing("AMBIENT_MUSIC_CLICK", 4)
                     sendBroadcastWithoutDismissingKeyguard(expandIntent)
+                    return
+                }
+                if (mOpenIntent != null) {
+                    onTextClick()
                 }
             } else {
                 onTextClick()
@@ -1165,6 +1186,7 @@ open class AmbientIndicationContainer(context: Context, attrs: AttributeSet) :
             }
         mAmbientIndicationTextContainer.visibility =
             if (TextUtils.isEmpty(text)) View.GONE else View.VISIBLE
+        updateRootVisibility()
 
         if (
             !mIsCurrentlyInExpandedState &&

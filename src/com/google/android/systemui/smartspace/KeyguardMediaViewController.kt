@@ -48,12 +48,14 @@ constructor(
         }
 
         val newTitle = metadata?.let {
-            val displayTitle = it.getText(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
-            if (TextUtils.isEmpty(displayTitle)) {
-                it.getText(MediaMetadata.METADATA_KEY_TITLE)
-            } else {
-                displayTitle
-            } ?: context.resources.getString(R.string.music_controls_no_title)
+            var text = it.getText(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
+            if (TextUtils.isEmpty(text)) {
+                text = it.getText(MediaMetadata.METADATA_KEY_TITLE)
+            }
+            if (TextUtils.isEmpty(text)) {
+                text = context.resources.getString(R.string.music_controls_no_title)
+            }
+            text
         }
 
         val newArtist = metadata?.getText(MediaMetadata.METADATA_KEY_ARTIST)

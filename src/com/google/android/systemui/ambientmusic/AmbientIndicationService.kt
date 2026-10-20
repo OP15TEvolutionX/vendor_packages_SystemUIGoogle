@@ -44,7 +44,13 @@ class AmbientIndicationService(
     fun getCurrentUser(): Int = selectedUserInteractor.getSelectedUserId()
 
     fun isForCurrentUser(): Boolean {
-        return sendingUserId == getCurrentUser() || sendingUserId == -1
+        return try {
+            val current = getCurrentUser()
+            val sender = sendingUserId
+            sender == current || sender <= 0 || sender == -10000 || sender == -1 || sender == -2
+        } catch (e: Exception) {
+            true
+        }
     }
 
     override fun onReceive(context: Context, intent: Intent) {

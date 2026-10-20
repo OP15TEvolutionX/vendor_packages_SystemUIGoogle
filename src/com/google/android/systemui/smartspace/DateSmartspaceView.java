@@ -210,11 +210,7 @@ public class DateSmartspaceView extends LinearLayout
         } else {
             mNextAlarmTextView.setContentDescription(
                     getContext().getString(R.string.accessibility_next_alarm, description));
-            String displayText =
-                    TextUtils.isEmpty(null)
-                            ? mNextAlarmData.mDescription
-                            : mNextAlarmData.mDescription + " · null";
-            mNextAlarmTextView.setText(displayText);
+            mNextAlarmTextView.setText(mNextAlarmData.mDescription);
             int iconSize =
                     getContext()
                             .getResources()

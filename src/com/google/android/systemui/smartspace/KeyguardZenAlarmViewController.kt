@@ -41,14 +41,8 @@ constructor(
     @Application val applicationScope: CoroutineScope,
     @Background val bgDispatcher: CoroutineDispatcher,
 ) {
-    lateinit var alarmImage: Drawable
+    val alarmImage: Drawable = context.resources.getDrawable(R.drawable.ic_access_alarms_big, null)
     val smartspaceViews = mutableSetOf<BcSmartspaceDataPlugin.SmartspaceView>()
-
-    init {
-        context.resources.getDrawable(R.drawable.ic_access_alarms_big, null)?.let {
-            alarmImage = it
-        }
-    }
 
     private val nextAlarmCallback = NextAlarmController.NextAlarmChangeCallback {
         applicationScope.launch { updateNextAlarm() }
@@ -123,10 +117,7 @@ constructor(
     }
 
     private suspend fun getNextAlarmTime(): Long =
-        withContext(bgDispatcher) {
-            val nextAlarm = alarmManager.getNextAlarmClock(ActivityManager.getCurrentUser())
-            nextAlarm?.triggerTime ?: 0L
-        }
+        withContext(bgDispatcher) { zenModeController.nextAlarm }
 
     fun updateModeIcon(view: BcSmartspaceDataPlugin.SmartspaceView, zenModeInfo: ZenModeInfo?) {
         applicationScope.launch {

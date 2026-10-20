@@ -428,6 +428,8 @@ public class BcSmartspaceView extends FrameLayout
         super.onFinishInflate();
         View pager = findViewById(R.id.smartspace_card_pager);
         mViewPager2 = (ViewPager2) pager;
+        // The no-op transformer only serves to disable the item animator.
+        mViewPager2.setPageTransformer((page, position) -> {});
         mAdapter = new CardRecyclerViewAdapter(this, mConfigProvider);
         CardRecyclerViewAdapter cardRecyclerViewAdapter =
                 new CardRecyclerViewAdapter(this, mConfigProvider);
@@ -581,7 +583,7 @@ public class BcSmartspaceView extends FrameLayout
             return;
         }
         float scale = (float) height / desiredHeight;
-        int width = (int) (MeasureSpec.getSize(widthMeasureSpec) / scale);
+        int width = Math.round(MeasureSpec.getSize(widthMeasureSpec) / scale);
         super.onMeasure(
                 MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
                 MeasureSpec.makeMeasureSpec(desiredHeight, MeasureSpec.EXACTLY));

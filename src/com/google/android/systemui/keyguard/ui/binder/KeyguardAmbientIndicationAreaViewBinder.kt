@@ -102,6 +102,11 @@ object KeyguardAmbientIndicationAreaViewBinder {
                     }
                 }
                 launch {
+                    viewModel.lyricsShowing.collect { showing ->
+                        ambientIndicationContainer.mShowingLyrics = showing
+                    }
+                }
+                launch {
                     keyguardInteractor.dozeTransitionModel.collect { dozeTransition ->
                         if (
                             dozeTransition.from == DozeStateModel.INITIALIZED &&

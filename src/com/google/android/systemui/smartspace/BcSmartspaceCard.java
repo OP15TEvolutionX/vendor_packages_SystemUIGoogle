@@ -96,8 +96,8 @@ public class BcSmartspaceCard extends ConstraintLayout implements SmartspaceCard
         this.mLoggingInfo = null;
         this.mEventNotifier = null;
         int i = 8;
-        BcSmartspaceTemplateDataUtils.updateVisibility(this.mSecondaryCardGroup, 8);
-        BcSmartspaceTemplateDataUtils.updateVisibility(this.mBaseActionIconSubtitleView, 8);
+        BcSmartspaceTemplateDataUtils.updateVisibility(this.mSecondaryCardGroup, View.GONE);
+        BcSmartspaceTemplateDataUtils.updateVisibility(this.mBaseActionIconSubtitleView, View.GONE);
         this.mIconDrawable.mIconDrawable = null;
         this.mBaseActionIconDrawable.mIconDrawable = null;
         int i2 = 0;
@@ -357,10 +357,10 @@ public class BcSmartspaceCard extends ConstraintLayout implements SmartspaceCard
             return;
         }
         if (TextUtils.isEmpty(charSequence)) {
-            BcSmartspaceTemplateDataUtils.updateVisibility(this.mBaseActionIconSubtitleView, 8);
+            BcSmartspaceTemplateDataUtils.updateVisibility(this.mBaseActionIconSubtitleView, View.GONE);
             return;
         }
-        BcSmartspaceTemplateDataUtils.updateVisibility(this.mBaseActionIconSubtitleView, 0);
+        BcSmartspaceTemplateDataUtils.updateVisibility(this.mBaseActionIconSubtitleView, View.VISIBLE);
         this.mBaseActionIconSubtitleView.setText(charSequence);
         this.mBaseActionIconSubtitleView.setCompoundDrawablesRelative(drawable, null, null, null);
         ContentDescriptionUtil.setFormattedContentDescription(
