@@ -22,6 +22,7 @@
     <string name="now_playing_label">Now Playing</string>
     <string name="ambient_music_searching">Identifying song</string>
     <string name="ambient_music_no_match">Couldn\'t identify song</string>
+    <string name="ambient_music_play_with">Play with</string>
 
     <!-- Battery Warnings -->
     <string name="low_battery_notification_title">%s battery left</string>

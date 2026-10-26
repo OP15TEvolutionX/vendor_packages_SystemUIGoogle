@@ -648,8 +648,14 @@ open class AmbientIndicationContainer(context: Context, attrs: AttributeSet) :
             } else {
                 context.getString(R.string.accessibility_now_playing_like_icon)
             }
-        if (dmpPackageName.isNullOrEmpty() || expandedIndicationData.dmpIntent == null) {
+        if (expandedIndicationData.dmpIntent == null) {
             mAmbientIndicationPlayContainer.visibility = View.GONE
+            return
+        }
+        if (dmpPackageName.isNullOrEmpty()) {
+            // No single target app (e.g. the system chooser), so use a generic icon.
+            mAmbientIndicationPlayIcon.setImageResource(R.drawable.ic_now_playing_play)
+            mAmbientIndicationPlayContainer.visibility = View.VISIBLE
             return
         }
         var applicationIcon: Drawable? = mMusicAppIconCache.get(dmpPackageName)
@@ -1210,6 +1216,13 @@ open class AmbientIndicationContainer(context: Context, attrs: AttributeSet) :
             mTempTextViewExtended.text = null
             runSongChangeSlideAnimation(measuredWidth, realSetWidth, newSong, newArtist)
             return
+        }
+
+        if (mExtendedIndication?.isSongSearching != true) {
+            // The searching state hides this container and relies on a delayed animation to
+            // bring it back. Make sure leaving that state never leaves it invisible.
+            mAmbientIndicationCollapsedContainer.alpha = 1.0f
+            mAmbientIndicationCollapsedContainer.translationY = 0.0f
         }
 
         if (mUsingExtendedIndication && mExtendedIndication?.isSongSearching == true) {

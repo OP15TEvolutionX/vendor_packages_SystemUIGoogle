@@ -51,6 +51,7 @@
     <dimen name="ambient_indication_first_recognition_animation_translation_y">21.5dp</dimen>
     <dimen name="ambient_indication_icon_size">20dp</dimen>
     <dimen name="ambient_indication_margin_bottom">71dp</dimen>
+    <dimen name="ambient_indication_udfps_min_height">100dp</dimen>
     <dimen name="ambient_indication_note_icon_size">14dp</dimen>
     <dimen name="ambient_indication_song_change_animation_translation_y">21.5dp</dimen>
     <dimen name="ambient_indication_song_searching_animation_translation_y">12dp</dimen>

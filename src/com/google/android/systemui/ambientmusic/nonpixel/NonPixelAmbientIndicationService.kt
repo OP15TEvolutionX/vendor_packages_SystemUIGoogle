@@ -10,6 +10,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
+import android.media.AudioPlaybackConfiguration
 import android.media.MediaMetadata
 import android.media.musicrecognition.MusicRecognitionManager
 import android.media.musicrecognition.RecognitionRequest
@@ -35,6 +36,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.google.android.systemui.ambientmusic.nonpixel.engine.HybridMusicRecognitionEngine
@@ -65,6 +67,7 @@ class NonPixelAmbientIndicationService(
 
             override fun onKeyguardVisibilityChanged(showing: Boolean) {
                 if (showing && isContinuousRecognitionEnabled()) {
+                    restoreOnDemandIcon()
                     scheduleNextPeriodicRecognition(20000L)
                 } else if (!showing) {
                     cancelPeriodicRecognition()
@@ -74,6 +77,17 @@ class NonPixelAmbientIndicationService(
             override fun onDreamingStateChanged(dreaming: Boolean) {
                 if (dreaming && isContinuousRecognitionEnabled()) {
                     scheduleNextPeriodicRecognition(20000L)
+                }
+            }
+        }
+
+    internal val playbackCallback: AudioManager.AudioPlaybackCallback =
+        object : AudioManager.AudioPlaybackCallback() {
+            override fun onPlaybackConfigChanged(configs: List<AudioPlaybackConfiguration>) {
+                // The interactor drops the icon when the phone starts playing music, so
+                // bring it back once playback has stopped.
+                if (!isDevicePlayingMusic()) {
+                    restoreOnDemandIcon()
                 }
             }
         }
@@ -159,6 +173,20 @@ class NonPixelAmbientIndicationService(
                 null,
             ),
         )
+    }
+
+    /** Re-posts the on-demand icon if nothing else is using the indication slot. */
+    fun restoreOnDemandIcon() {
+        if (!isOnDemandEnabled() || !isContinuousRecognitionEnabled()) {
+            return
+        }
+        if (isDevicePlayingMusic()) {
+            return
+        }
+        if (ambientIndicationInteractor.ambientMusicState.value != null) {
+            return
+        }
+        showOnDemandSearchIcon()
     }
 
     fun onSettingsChanged() {
@@ -275,6 +303,63 @@ class NonPixelAmbientIndicationService(
         }
     }
 
+    /**
+     * Receives the heart tap. Registered as not exported so other apps cannot change the saved
+     * list; the only sender is the [PendingIntent] from [createFavoritingIntent].
+     */
+    internal val savedSongReceiver: BroadcastReceiver =
+        object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                if (intent.action == ACTION_LOCAL_TOGGLE_SAVED_SONG) {
+                    toggleSavedSong()
+                }
+            }
+        }
+
+    /** The favoriting action used when the source of a song did not provide its own. */
+    private fun createFavoritingIntent(): PendingIntent =
+        PendingIntent.getBroadcast(
+            context,
+            0,
+            Intent(ACTION_LOCAL_TOGGLE_SAVED_SONG).setPackage(context.packageName),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+    /**
+     * Toggles the song currently shown and redraws the heart. The song is read from the state
+     * being displayed, so the tap always applies to what the person sees. The alarms are left
+     * alone so the indication keeps its remaining time and recognition is not rescheduled.
+     *
+     * Runs on the background handler the receiver is registered with, so the Settings write stays
+     * off the main thread. The state is updated atomically afterwards and only if the same song is
+     * still shown, since a new song may have arrived while the list was written.
+     */
+    private fun toggleSavedSong() {
+        val repository = ambientIndicationInteractor.ambientIndicationRepository
+        val extended = repository.ambientMusic.value?.extendedIndication ?: return
+        val title = extended.songTitle
+        val artist = extended.artistName
+        if (TextUtils.isEmpty(title)) return
+        val albumArt = extended.expandedIndicationData?.albumArtUri?.toString()
+        val saved = SavedSongs.toggle(context, title, artist, albumArt)
+        repository.ambientMusic.update { music ->
+            val current = music?.extendedIndication
+            if (
+                music == null ||
+                    current == null ||
+                    !TextUtils.equals(current.songTitle, title) ||
+                    !TextUtils.equals(current.artistName, artist)
+            ) {
+                return@update music
+            }
+            val expanded = current.expandedIndicationData ?: ExpandedIndicationData()
+            music.copy(
+                extendedIndication =
+                    current.copy(expandedIndicationData = expanded.copy(isFavorite = saved))
+            )
+        }
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         if (!isForCurrentUser()) {
             return
@@ -287,6 +372,7 @@ class NonPixelAmbientIndicationService(
             ACTION_AMM_AMBIENT_INDICATION_HIDE -> {
                 alarmManager.cancel(hideIndicationListener)
                 ambientIndicationInteractor.hideAmbientMusic()
+                restoreOnDemandIcon()
             }
             ACTION_AMBIENT_INDICATION_SHOW,
             ACTION_LOCAL_AMBIENT_INDICATION_SHOW,
@@ -384,19 +470,19 @@ class NonPixelAmbientIndicationService(
         val songTitle = result.title
         val artistName = result.artist
         val displayText = "$songTitle - $artistName"
-        val expandedIndicationData = if (result.albumArtUri != null) {
+        val musicApp = MusicAppLinks.create(context, songTitle, artistName)
+        val expandedIndicationData =
             ExpandedIndicationData(
-                null,
-                null,
+                musicApp?.pendingIntent,
+                musicApp?.packageName,
                 result.albumArtUri,
-                false,
+                SavedSongs.isSaved(context, songTitle, artistName),
             )
-        } else null
 
         ambientIndicationInteractor.setAmbientMusic(
             displayText,
             null,
-            null,
+            createFavoritingIntent(),
             0,
             false,
             null,
@@ -418,55 +504,7 @@ class NonPixelAmbientIndicationService(
             null,
         )
 
-        saveToHistory(songTitle, artistName, result.albumArtUri)
-
         scheduleNextPeriodicRecognition(PERIODIC_INTERVAL_MILLIS)
-    }
-
-    private fun saveToHistory(title: String, artist: String, albumArtUri: Uri?) {
-        try {
-            val existingJson = Settings.System.getStringForUser(
-                context.contentResolver,
-                "now_playing_history",
-                UserHandle.USER_CURRENT,
-            )
-            val jsonArray = if (!existingJson.isNullOrEmpty()) {
-                org.json.JSONArray(existingJson)
-            } else {
-                org.json.JSONArray()
-            }
-
-            if (jsonArray.length() > 0) {
-                val latest = jsonArray.getJSONObject(0)
-                if (latest.optString("title") == title && latest.optString("artist") == artist) {
-                    return
-                }
-            }
-
-            val newEntry = org.json.JSONObject().apply {
-                put("title", title)
-                put("artist", artist)
-                put("timestamp", System.currentTimeMillis())
-                if (albumArtUri != null) {
-                    put("albumArtUri", albumArtUri.toString())
-                }
-            }
-
-            val newArray = org.json.JSONArray()
-            newArray.put(newEntry)
-            for (i in 0 until jsonArray.length().coerceAtMost(99)) {
-                newArray.put(jsonArray.getJSONObject(i))
-            }
-
-            Settings.System.putStringForUser(
-                context.contentResolver,
-                "now_playing_history",
-                newArray.toString(),
-                UserHandle.USER_CURRENT,
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to save track to history", e)
-        }
     }
 
     private fun handleShow(intent: Intent) {
@@ -489,17 +527,27 @@ class NonPixelAmbientIndicationService(
 
         val albumArtUriString = getExtraString(intent, EXTRA_ALBUM_ART_URI, EXTRA_LOCAL_ALBUM_ART_URI, "album_art_uri")
         val albumArtUri = if (TextUtils.isEmpty(albumArtUriString)) null else Uri.parse(albumArtUriString)
-        val expandedIndicationData = if (albumArtUri != null) {
+
+        val isRecognitionResult = getExtraBoolean(intent, EXTRA_IS_RECOGNITION_RESULT, EXTRA_LOCAL_IS_RECOGNITION_RESULT, "is_recognition_result", default = true)
+        val isSongSearching = getExtraBoolean(intent, EXTRA_IS_SONG_SEARCHING, EXTRA_LOCAL_IS_SONG_SEARCHING, "is_song_searching", default = false)
+
+        // A source that sends its own favoriting intent keeps it. Otherwise the heart saves to
+        // the local list.
+        val useLocalFavorite =
+            favoritingIntent == null &&
+                isRecognitionResult &&
+                !isSongSearching &&
+                !TextUtils.isEmpty(songTitle)
+        val effectiveFavoritingIntent =
+            if (useLocalFavorite) createFavoritingIntent() else favoritingIntent
+        val expandedIndicationData = if (albumArtUri != null || useLocalFavorite) {
             ExpandedIndicationData(
                 openIntent,
                 null,
                 albumArtUri,
-                false,
+                if (useLocalFavorite) SavedSongs.isSaved(context, songTitle, artistName) else false,
             )
         } else null
-
-        val isRecognitionResult = getExtraBoolean(intent, EXTRA_IS_RECOGNITION_RESULT, EXTRA_LOCAL_IS_RECOGNITION_RESULT, "is_recognition_result", default = true)
-        val isSongSearching = getExtraBoolean(intent, EXTRA_IS_SONG_SEARCHING, EXTRA_LOCAL_IS_SONG_SEARCHING, "is_song_searching", default = false)
 
         if (useExtendedInteraction || !TextUtils.isEmpty(songTitle)) {
             val expandIntent = getExtraParcelable<PendingIntent>(intent, EXTRA_EXPAND_INTENT, EXTRA_LOCAL_EXPAND_INTENT, "expand_intent")
@@ -507,7 +555,7 @@ class NonPixelAmbientIndicationService(
             ambientIndicationInteractor.setAmbientMusic(
                 displayText,
                 openIntent,
-                favoritingIntent,
+                effectiveFavoritingIntent,
                 iconOverride,
                 skipUnlock,
                 iconDescription,
@@ -532,10 +580,6 @@ class NonPixelAmbientIndicationService(
             )
         }
 
-        if (isRecognitionResult && !isSongSearching && !songTitle.isNullOrEmpty()) {
-            saveToHistory(songTitle.toString(), artistName?.toString() ?: "", albumArtUri)
-        }
-
         alarmManager.setExact(
             AlarmManager.ELAPSED_REALTIME_WAKEUP,
             SystemClock.elapsedRealtime() + ttlMillis,
@@ -553,7 +597,7 @@ class NonPixelAmbientIndicationService(
         val favoritingIntent = getExtraParcelable<PendingIntent>(intent, EXTRA_FAVORITING_INTENT, EXTRA_LOCAL_FAVORITING_INTENT, "favoriting_intent")
         val albumArtUriString = getExtraString(intent, EXTRA_ALBUM_ART_URI, EXTRA_LOCAL_ALBUM_ART_URI, "album_art_uri")
         val albumArtUri = if (TextUtils.isEmpty(albumArtUriString)) null else Uri.parse(albumArtUriString)
-        val isFavorite = getExtraBoolean(intent, EXTRA_IS_FAVORITE, EXTRA_LOCAL_IS_FAVORITE, "is_favorite", default = false)
+        val senderIsFavorite = getExtraBoolean(intent, EXTRA_IS_FAVORITE, EXTRA_LOCAL_IS_FAVORITE, "is_favorite", default = false)
         val dmpIntent = getExtraParcelable<PendingIntent>(intent, EXTRA_DMP_INTENT, EXTRA_LOCAL_DMP_INTENT, "dmp_intent")
         val dmpPackageName = getExtraString(intent, EXTRA_DMP_PACKAGE_NAME, EXTRA_LOCAL_DMP_PACKAGE_NAME, "dmp_package_name")
         val ttlMillis = getTtlMillis(intent)
@@ -563,6 +607,15 @@ class NonPixelAmbientIndicationService(
         } else {
             text
         }
+
+        // A source that sends its own favoriting intent keeps it and its heart state.
+        // Otherwise the heart saves to the local list.
+        val useLocalFavorite = favoritingIntent == null && !TextUtils.isEmpty(songTitle)
+        val effectiveFavoritingIntent =
+            if (useLocalFavorite) createFavoritingIntent() else favoritingIntent
+        val isFavorite =
+            if (useLocalFavorite) SavedSongs.isSaved(context, songTitle, artistName)
+            else senderIsFavorite
 
         val expandedIndicationData =
             ExpandedIndicationData(
@@ -575,7 +628,7 @@ class NonPixelAmbientIndicationService(
         ambientIndicationInteractor.setAmbientMusic(
             displayText,
             openIntent,
-            favoritingIntent,
+            effectiveFavoritingIntent,
             0,
             false,
             "",
@@ -628,19 +681,19 @@ class NonPixelAmbientIndicationService(
             ?: extras?.getString("album_art_uri")
             ?: extras?.getString("com.google.android.ambientindication.extra.ALBUM_ART_URI")
         val albumArtUri = if (TextUtils.isEmpty(albumArtUriString)) null else Uri.parse(albumArtUriString)
-        val expandedIndicationData = if (albumArtUri != null) {
+        val musicApp = MusicAppLinks.create(context, songTitle, artistName)
+        val expandedIndicationData =
             ExpandedIndicationData(
-                null,
-                null,
+                musicApp?.pendingIntent,
+                musicApp?.packageName,
                 albumArtUri,
-                false,
+                SavedSongs.isSaved(context, songTitle, artistName),
             )
-        } else null
 
         ambientIndicationInteractor.setAmbientMusic(
             text,
             null,
-            null,
+            createFavoritingIntent(),
             0,
             false,
             null,
@@ -770,6 +823,7 @@ class NonPixelAmbientIndicationService(
         const val ACTION_LOCAL_AMBIENT_INDICATION_HIDE = "com.google.android.systemui.ambientmusic.action.AMBIENT_INDICATION_HIDE"
         const val ACTION_LOCAL_UPDATE_QUICK_AFFORDANCE_STATE = "com.google.android.systemui.ambientmusic.action.UPDATE_QUICK_AFFORDANCE_STATE"
         const val ACTION_LOCAL_ON_DEMAND_SEARCH = "com.google.android.systemui.ambientmusic.action.ON_DEMAND_SEARCH"
+        const val ACTION_LOCAL_TOGGLE_SAVED_SONG = "com.google.android.systemui.ambientmusic.action.TOGGLE_SAVED_SONG"
         const val ACTION_GOOGLE_ON_DEMAND_CLICK = "com.google.intelligence.sense.ambientmusic.ondemand.AQA_CLICK"
 
         const val PACKAGE_AMM = "com.kieronquinn.app.ambientmusicmod"
